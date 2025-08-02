@@ -1,6 +1,7 @@
-from tkinter import Tk, Widget, Canvas
+from tkinter import Tk, Widget, Canvas, Scrollbar
 from PIL import Image, ImageTk
 from pdf2image import convert_from_path, convert_from_bytes
+
 
 class PdfReader(Widget):
 
@@ -31,11 +32,16 @@ class PdfReader(Widget):
         self.__ctrl : bool = False
 
         self.canvas : Canvas = Canvas(self, kw)
-        self.canvas.pack()
+        self.canvas.pack(anchor='nw')
         self.canvas.bind('<MouseWheel>', self.__mousewheel)
         self.canvas.bind('<Key-Control_L>', self.__ctrlKey); self.canvas.bind('<Key-Control_R>', self.__ctrlKey)
         self.canvas.bind('<KeyRelease-Control_L>', self.__ctrlKeyRelease); self.canvas.bind('<KeyRelease-Control_R>', self.__ctrlKeyRelease)
         self.canvas.focus_set()
+
+        self.verticalScrollBar : Scrollbar = Scrollbar(self, width=20, orient='vertical', command=self.__verticalScrollBar)
+        self.verticalScrollBar.place()
+        self.horizontalScrollBar : Scrollbar = Scrollbar(self, width=20, orient='horizontal', command=self.__horizontalScrollBar)
+        self.horizontalScrollBar.place()
 
         if defaultFile != None:
             self.loadFromPath(defaultFile)
@@ -74,6 +80,7 @@ class PdfReader(Widget):
         self.__resize()
 
     def __resized(self) -> bool:
+        '''Check if the PdfReader was resized inside the main frame'''
         if (self.__width, self.__height) != (self.winfo_width(), self.winfo_height()):
             self.__width, self.__height = self.winfo_width(), self.winfo_height()
             return True
@@ -94,15 +101,20 @@ class PdfReader(Widget):
             self.__zoom = self.winfo_fpixels('1i') / 200
         if self.__pageWidth * self.__zoom < self.__width:
             self.__offsetX = (self.__width - self.__pageWidth * self.__zoom) / self.__zoom / 2
+            self.horizontalScrollBar.place_forget()
         else:
             self.__offsetX = max(min(0, self.__offsetX), self.__width / self.__zoom - self.__pageWidth)
+            self.horizontalScrollBar.place(x=0, y=self.__height, anchor='sw', width=self.__width - 20, height=20)
+
+        self.verticalScrollBar.place(x=self.__width, y=0, anchor='ne', width=20, height=self.__height)
 
         self.__photoImg : dict[int : ImageTk.PhotoImage] = {}
-        for page in range(int(self.currentPage) - 2, int(self.currentPage) + self.__height // int(self.__pageHeight * self.__zoom) + 2):
+        for page in range(self.currentPage, self.currentPage + (self.__height // int(self.__pageHeight * self.__zoom)) + 2):
             self.__renderPage(page)
         self.__print()
 
     def __renderPage(self, page : int):
+        '''Convert a Pillow Image object to a Tk PhotoImage of the right size'''
         if page > 0 and page <= self.pageCount:
             self.__photoImg[page] = ImageTk.PhotoImage(
                 self.__sourceImg[page - 1].resize(
@@ -112,6 +124,7 @@ class PdfReader(Widget):
             ) 
 
     def __print(self):
+        '''Create new canvas elements after deleting the previous ones'''
         self.canvas.delete('all')
 
         self.imgId : dict[int : int] = {}
@@ -131,6 +144,21 @@ class PdfReader(Widget):
                 self.imgId[page], int(self.__offsetX * self.__zoom),
                 int((self.__offsetY + self.__pageHeight * (page - 1)) * self.__zoom)
             )
+
+    def __verticalScrollBar(self, *args):
+        '''Vertical ScrollBar widget handling'''
+        if args[0] == 'moveto':
+            self.verticalScrollBar.set(max(0, float(args[1]) - 0.02), float(args[1]) + 0.02)
+            self.__offsetY = - float(args[1]) * (self.pageCount - 1) * self.__pageHeight
+            self.currentPage = int((- self.__offsetY) // self.__pageHeight) + 1
+            self.__resize()
+
+    def __horizontalScrollBar(self, *args):
+        '''Horizontal ScrollBar widget handling'''
+        if args[0] == 'moveto':
+            self.horizontalScrollBar.set(max(0, float(args[1]) - 0.02), float(args[1]) + 0.02)
+            self.__offsetX = float(args[1]) * (self.__width - self.__pageWidth * self.__zoom) / self.__zoom
+            self.__relocate()
 
     def __ctrlKey(self, event):
         '''Tk's control key event handler'''
@@ -152,7 +180,12 @@ class PdfReader(Widget):
             self.__resize()
         else: # Scroll up/down
             self.__offsetY += event.delta
-            if self.currentPage != - self.__offsetY // self.__pageHeight:
+            if self.pageCount > 1:
+                self.verticalScrollBar.set(
+                    - self.__offsetY / ((self.pageCount - 1) * self.__pageHeight) - 0.02,
+                    - self.__offsetY / ((self.pageCount - 1) * self.__pageHeight) + 0.02
+                )
+            if self.currentPage != ((- self.__offsetY) // self.__pageHeight) + 1:
                 oldPage = max(self.__photoImg.keys()) if event.delta > 0 else min(self.__photoImg.keys())
                 newPage = min(self.__photoImg.keys()) - 1 if event.delta > 0 else max(self.__photoImg.keys()) + 1
 
@@ -164,7 +197,7 @@ class PdfReader(Widget):
                     self.imgId[newPage] = (
                         self.canvas.create_image(0, 0, image=self.__photoImg[newPage], anchor='nw')
                     )
-                self.currentPage = - self.__offsetY // self.__pageHeight
+                self.currentPage = ((- self.__offsetY) // self.__pageHeight) + 1
             self.__relocate()
 
 tk = Tk()
