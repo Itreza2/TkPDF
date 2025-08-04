@@ -1,7 +1,7 @@
 from tkinter import Tk, Widget, Canvas, Entry, Scrollbar, IntVar
 from PIL import Image, ImageTk
-from pdf2image import convert_from_path, convert_from_bytes
-from time import time
+import pymupdf as pdf
+from threading import Thread
 
 
 class PdfReader(Widget):
@@ -65,21 +65,16 @@ class PdfReader(Widget):
             'rotC' : PdfReader.__IconButton(self.canvas, 0.795, 0.008, 0.075, 3)
         }
         if defaultFile != None:
-            self.loadFromPath(defaultFile)
+            self.load(defaultFile)
         self.__loop()
 
     #--------------------#
     #[> Public Methods <]#
     #--------------------#
 
-    def loadFromPath(self, fp : str) -> None:
-        self.__load(convert_from_path(fp))
-
-    def loadFromBytes(self, bytes) -> None:
-        self.__load(convert_from_bytes(bytes))
-
     def load(self, fp : str) -> None: 
-        self.loadFromPath(fp)
+        Thread(target=self.__load, kwargs={'fp' : fp}).start()
+        while len(self.__sourceImg) == 0: pass #Busy waiting until one page at least is loaded (not optimal)
 
     #---------------------#
     #[> Private Methods <]#
@@ -137,13 +132,21 @@ class PdfReader(Widget):
 
         self.canvas.after(16, self.__loop)
 
-    def __load(self, pdf : list[Image.Image]):
-        self.__pageWidth : int = pdf[0].width
-        self.__pageHeight : int = pdf[0].height
+    def __load(self, fp : str):
+        self.__pageWidth : int = 1
+        self.__pageHeight : int = 1
         self.currentPage = 1
-        self.pageCount = len(pdf)
+        self.pageCount = 0
 
-        self.__sourceImg = pdf
+        self.__sourceImg = []
+        doc = pdf.open(fp)
+        for page in doc:
+            pix = page.get_pixmap()
+            self.__sourceImg.append(Image.frombytes('RGB', (pix.width, pix.height), pix.samples))
+            
+            self.__pageWidth = self.__sourceImg[-1].width
+            self.__pageHeight = self.__sourceImg[-1].height
+            self.pageCount += 1
 
         self.__resize()
 
@@ -359,6 +362,6 @@ class PdfReader(Widget):
 
 
 tk = Tk()
-test = PdfReader(tk, fp='test.pdf', width=500, height=500)
+test = PdfReader(tk, fp='t.pdf', width=500, height=500)
 test.pack()
 tk.mainloop()
