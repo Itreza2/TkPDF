@@ -1,6 +1,7 @@
 from tkinter import Tk, Widget, Canvas, Entry, Scrollbar, IntVar
 from PIL import Image, ImageTk
 from pdf2image import convert_from_path, convert_from_bytes
+from time import time
 
 
 class PdfReader(Widget):
@@ -11,7 +12,7 @@ class PdfReader(Widget):
     FREE_MOVE = 3
 
     def __init__(self, master=None, **kw):
-        '''Construct a PdfReader widget with the parent MASTER.'''
+        '''Construct a PdfReader "widget" with the parent MASTER.'''
         self.mode = PdfReader.FULL_WIDTH
         defaultFile = None
         if 'defaultMode' in kw:
@@ -32,6 +33,7 @@ class PdfReader(Widget):
         self.__width, self.__height = 1, 1
         self.__ctrl : bool = False
         self.__cX, self.__cY, self.__clic = 0, 0, False
+        self.__lrArrowPressed = False
         self.__pageVar : IntVar = IntVar(value=0)
 
         self.canvas : Canvas = Canvas(self, kw)
@@ -42,6 +44,8 @@ class PdfReader(Widget):
         self.canvas.bind('<MouseWheel>', self.__mousewheel)
         self.canvas.bind('<Key-Control_L>', self.__ctrlKey); self.canvas.bind('<Key-Control_R>', self.__ctrlKey)
         self.canvas.bind('<KeyRelease-Control_L>', self.__ctrlKeyRelease); self.canvas.bind('<KeyRelease-Control_R>', self.__ctrlKeyRelease)
+        self.canvas.bind('<Key>', self.__anyKey)
+        self.canvas.bind('<KeyRelease>', self.__anyKeyRelease)
         self.canvas.focus_set()
 
         self.verticalScrollBar : Scrollbar = Scrollbar(self, width=20, orient='vertical', command=self.__verticalScrollBar)
@@ -254,6 +258,25 @@ class PdfReader(Widget):
         '''Tk's control key release event handler'''
         self.__ctrl = False
 
+    def __anyKey(self, event):
+        '''Tk's other keys events handler'''
+        if not self.__lrArrowPressed:
+            if event.keysym == 'Left':
+                self.__lrArrowPressed = True
+                self.currentPage = max(min(self.currentPage - 1, self.pageCount), 1)
+                self.__offsetY = - (self.currentPage - 1) * self.__pageHeight
+                self.__resize()
+            elif event.keysym == 'Right':
+                self.__lrArrowPressed = True
+                self.currentPage = max(min(self.currentPage + 1, self.pageCount), 1)
+                self.__offsetY = - (self.currentPage - 1) * self.__pageHeight
+                self.__resize()
+
+    def __anyKeyRelease(self, event):
+        '''Tk's other keys release events handler'''
+        if self.__lrArrowPressed and event.keysym in ('Right', 'Left'):
+            self.__lrArrowPressed = False
+
     def __mousewheel(self, event):
         '''Tk's mousewheel event handler'''
         self.mode = PdfReader.FREE_MOVE
@@ -336,6 +359,6 @@ class PdfReader(Widget):
 
 
 tk = Tk()
-test = PdfReader(tk, fp='test.pdf', width=500, height=700)
+test = PdfReader(tk, fp='test.pdf', width=500, height=500)
 test.pack()
 tk.mainloop()
