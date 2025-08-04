@@ -1,4 +1,4 @@
-from tkinter import Tk, Widget, Canvas, Scrollbar
+from tkinter import Tk, Widget, Canvas, Entry, Scrollbar, IntVar
 from PIL import Image, ImageTk
 from pdf2image import convert_from_path, convert_from_bytes
 
@@ -27,12 +27,18 @@ class PdfReader(Widget):
         self.pageCount : int = 0
         self.currentPage : int = 0
         self.__zoom = 1
+        self.__rotation = 0
         self.__offsetX, self.__offsetY = 0, 0
         self.__width, self.__height = 1, 1
         self.__ctrl : bool = False
+        self.__cX, self.__cY, self.__clic = 0, 0, False
+        self.__pageVar : IntVar = IntVar(value=0)
 
         self.canvas : Canvas = Canvas(self, kw)
         self.canvas.pack(anchor='nw')
+        self.canvas.bind('<Button-1>', self.__leftClic)
+        self.canvas.bind('<ButtonRelease-1>', self.__leftClicRelease)
+        self.canvas.bind('<Motion>', self.__motion)
         self.canvas.bind('<MouseWheel>', self.__mousewheel)
         self.canvas.bind('<Key-Control_L>', self.__ctrlKey); self.canvas.bind('<Key-Control_R>', self.__ctrlKey)
         self.canvas.bind('<KeyRelease-Control_L>', self.__ctrlKeyRelease); self.canvas.bind('<KeyRelease-Control_R>', self.__ctrlKeyRelease)
@@ -42,7 +48,18 @@ class PdfReader(Widget):
         self.verticalScrollBar.place()
         self.horizontalScrollBar : Scrollbar = Scrollbar(self, width=20, orient='horizontal', command=self.__horizontalScrollBar)
         self.horizontalScrollBar.place()
+        self.__pageEntry : Entry = Entry(self, textvariable=self.__pageVar, justify='center')
 
+        self.__buttons : dict[str : PdfReader.__IconButton] = {
+            'glassP' : PdfReader.__IconButton(self.canvas, 0.008, 0.008, 0.075, 4),
+            'glassM' : PdfReader.__IconButton(self.canvas, 0.008, 0.08, 0.075, 5),
+            'modeFW' : PdfReader.__IconButton(self.canvas, 0.12, 0.008, 0.075, 6),
+            'modeFP' : PdfReader.__IconButton(self.canvas, 0.2, 0.008, 0.075, 7),
+            'left' : PdfReader.__IconButton(self.canvas, 0.38, 0.025, 0.05, 0),
+            'right' : PdfReader.__IconButton(self.canvas, 0.55, 0.025, 0.05, 1),
+            'rotCC' : PdfReader.__IconButton(self.canvas, 0.715, 0.008, 0.075, 2),
+            'rotC' : PdfReader.__IconButton(self.canvas, 0.795, 0.008, 0.075, 3)
+        }
         if defaultFile != None:
             self.loadFromPath(defaultFile)
         self.__loop()
@@ -67,6 +84,53 @@ class PdfReader(Widget):
     def __loop(self):
         if self.__resized(): self.__resize()
 
+        if self.focus_get() == self.__pageEntry:
+            try: # get raise an exception when the entry is empty
+                if self.currentPage != self.__pageVar.get():
+                    self.currentPage = max(min(self.__pageVar.get(), self.pageCount), 1)
+                    self.__offsetY = - (self.currentPage - 1) * self.__pageHeight
+                    self.__resize()
+            except Exception as e: pass # :(
+        else:
+            self.__pageVar.set(int(self.currentPage))
+
+        #UI controls
+        if self.__clic:
+            self.__clic = False
+            if self.__buttons['glassP'].hovered(self.__cX, self.__cY):
+                self.mode = PdfReader.FREE_MOVE
+                self.__zoom += 0.1
+                self.__resize()
+            elif self.__buttons['glassM'].hovered(self.__cX, self.__cY):
+                self.mode = PdfReader.FREE_MOVE
+                self.__zoom -= 0.1
+                self.__resize()
+            elif self.__buttons['modeFW'].hovered(self.__cX, self.__cY):
+                self.mode = PdfReader.FULL_WIDTH
+                self.__resize()
+            elif self.__buttons['modeFP'].hovered(self.__cX, self.__cY):
+                self.mode = PdfReader.FULL_PAGE
+                self.__resize()
+            elif self.__buttons['left'].hovered(self.__cX, self.__cY):
+                self.currentPage = max(min(self.currentPage - 1, self.pageCount), 1)
+                self.__offsetY = - (self.currentPage - 1) * self.__pageHeight
+                self.__resize()
+            elif self.__buttons['right'].hovered(self.__cX, self.__cY):
+                self.currentPage = max(min(self.currentPage + 1, self.pageCount), 1)
+                self.__offsetY = - (self.currentPage - 1) * self.__pageHeight
+                self.__resize()
+            elif self.__buttons['rotC'].hovered(self.__cX, self.__cY):
+                self.__rotation -= 90
+                self.__pageWidth, self.__pageHeight = self.__pageHeight, self.__pageWidth
+                self.__resize()
+            elif self.__buttons['rotCC'].hovered(self.__cX, self.__cY):
+                self.__rotation += 90
+                self.__pageWidth, self.__pageHeight = self.__pageHeight, self.__pageWidth
+                self.__resize()
+        else:
+            for button in self.__buttons.keys():
+                self.__buttons[button].hovered(self.__cX, self.__cY)
+
         self.canvas.after(16, self.__loop)
 
     def __load(self, pdf : list[Image.Image]):
@@ -83,6 +147,8 @@ class PdfReader(Widget):
         '''Check if the PdfReader was resized inside the main frame'''
         if (self.__width, self.__height) != (self.winfo_width(), self.winfo_height()):
             self.__width, self.__height = self.winfo_width(), self.winfo_height()
+            for button in self.__buttons.keys():
+                self.__buttons[button].resize()
             return True
         return False
 
@@ -96,7 +162,7 @@ class PdfReader(Widget):
             else:
                 self.__zoom = self.__width / self.__pageWidth
                 self.__offsetX = 0
-            self.__offsetY = self.__pageHeight * self.currentPage
+            self.__offsetY = - (self.currentPage - 1) * self.__pageHeight
         elif self.mode == PdfReader.REAL_SIZE:
             self.__zoom = self.winfo_fpixels('1i') / 200
         if self.__pageWidth * self.__zoom < self.__width:
@@ -107,9 +173,10 @@ class PdfReader(Widget):
             self.horizontalScrollBar.place(x=0, y=self.__height, anchor='sw', width=self.__width - 20, height=20)
 
         self.verticalScrollBar.place(x=self.__width, y=0, anchor='ne', width=20, height=self.__height)
+        self.__pageEntry.place(x=self.__width * 0.5, y=self.__width * 0.045, anchor='e', width=self.__width * 0.06, height=self.__width * 0.04)
 
         self.__photoImg : dict[int : ImageTk.PhotoImage] = {}
-        for page in range(self.currentPage, self.currentPage + (self.__height // int(self.__pageHeight * self.__zoom)) + 2):
+        for page in range(int(self.currentPage), int(self.currentPage) + (self.__height // int(self.__pageHeight * self.__zoom)) + 2):
             self.__renderPage(page)
         self.__print()
 
@@ -120,8 +187,8 @@ class PdfReader(Widget):
                 self.__sourceImg[page - 1].resize(
                     (max(1, int(self.__sourceImg[page - 1].width * self.__zoom)), 
                         max(1, int(self.__sourceImg[page - 1].height * self.__zoom)))
-                )
-            ) 
+                ).rotate(self.__rotation, expand=True)
+            )
 
     def __print(self):
         '''Create new canvas elements after deleting the previous ones'''
@@ -136,6 +203,12 @@ class PdfReader(Widget):
                     image=self.__photoImg[page], anchor='nw'
                 )
             )
+        for button in self.__buttons.keys():
+            self.__buttons[button].print()
+        self.canvas.create_text(
+            self.__width * 0.5, self.__width * 0.045, anchor='w',
+            text=f'/ {self.pageCount}', font=('Arial', int(self.__width * 0.02))
+        )
 
     def __relocate(self):
         '''relocate the image after an offset change'''
@@ -160,6 +233,19 @@ class PdfReader(Widget):
             self.__offsetX = float(args[1]) * (self.__width - self.__pageWidth * self.__zoom) / self.__zoom
             self.__relocate()
 
+    def __leftClic(self, event):
+        '''Tk's mouse left clic event handler'''
+        self.__clic = True
+        self.canvas.focus_set()
+
+    def __leftClicRelease(self, event):
+        '''Tk's mouse left clic release event handler'''
+        self.__clic = False
+
+    def __motion(self, event):
+        '''Tk's mouse motion event handler'''
+        self.__cX, self.__cY = event.x, event.y
+
     def __ctrlKey(self, event):
         '''Tk's control key event handler'''
         self.__ctrl = True
@@ -171,6 +257,7 @@ class PdfReader(Widget):
     def __mousewheel(self, event):
         '''Tk's mousewheel event handler'''
         self.mode = PdfReader.FREE_MOVE
+        self.canvas.focus_set()
         if self.__ctrl: # Zoom in/out
             delta = event.delta / 5000
 
@@ -198,7 +285,55 @@ class PdfReader(Widget):
                         self.canvas.create_image(0, 0, image=self.__photoImg[newPage], anchor='nw')
                     )
                 self.currentPage = ((- self.__offsetY) // self.__pageHeight) + 1
-            self.__relocate()
+                self.__print()
+            else:
+                self.__relocate()
+
+
+    class __IconButton:
+        '''Iteractible canvas element, a lot less ugly than a button widget'''
+
+        ICON_SIZE = 64
+        source : Image.Image = Image.open('icons.png')
+
+        def __init__(self, canvas : Canvas, x : float, y : float, w : float, icon : int):
+            self.canvas : Canvas = canvas
+            self.x, self.y, self.w = x, y, w
+            self.pxX, self.pxY, self.pxW = 0, 0, 0
+            self.icon = icon
+            self.id = 0
+
+            self.resize()
+
+        def resize(self):
+            canWidth = self.canvas.winfo_width()
+            self.pxX, self.pxY, self.pxW = self.x * canWidth, self.y * canWidth, int(self.w * canWidth)
+            self.image : ImageTk.PhotoImage = ImageTk.PhotoImage(
+                self.source.crop((
+                    self.ICON_SIZE * self.icon, 0, self.ICON_SIZE * (self.icon + 1), self.ICON_SIZE
+                )).resize((max(1, self.pxW), max(1, self.pxW)))
+            )
+            self.imageHovered : ImageTk.PhotoImage = ImageTk.PhotoImage(
+                self.source.crop((
+                    self.ICON_SIZE * self.icon, self.ICON_SIZE, self.ICON_SIZE * (self.icon + 1), 2* self.ICON_SIZE
+                )).resize((max(1, self.pxW), max(1, self.pxW)))
+            )
+
+        def print(self):
+            self.id = self.canvas.create_image(
+                self.pxX, self.pxY, image=self.image, anchor='nw', tags='hud'
+            )
+
+        def hovered(self, x, y) -> bool :
+            if x > self.pxX and x < self.pxX + self.pxW and y > self.pxY and y < self.pxY + self.pxW:
+                if self.id != 0:
+                    self.canvas.itemconfigure(self.id, image=self.imageHovered)
+                return True
+            elif self.id != 0:
+                self.canvas.itemconfigure(self.id, image=self.image)
+            return False
+
+
 
 tk = Tk()
 test = PdfReader(tk, fp='test.pdf', width=500, height=700)
