@@ -5,21 +5,27 @@ from threading import Thread
 
 
 class PdfReader(Widget):
+    '''A PDF file reader inside a Tk frame, behaving like a widget'''
 
+    '''Viewing modes'''
     FULL_WIDTH = 0
     FULL_PAGE = 1
     REAL_SIZE = 2
     FREE_MOVE = 3
 
-    def __init__(self, master=None, **kw):
-        '''Construct a PdfReader "widget" with the parent MASTER.'''
-        self.mode = PdfReader.FULL_WIDTH
-        defaultFile = None
-        if 'defaultMode' in kw:
-            if kw['defaultMode'] > 0 and kw['defaultMode'] <= 2:
-                self.mode = kw.pop('defaultMode')
-        if 'fp' in kw:
-            defaultFile = kw.pop('fp')
+    def __init__(self, master=None, *, 
+                 defaultMode : int = FULL_WIDTH,
+                 fp : str = ..., filepath : str = ...,
+                 **kw):
+        '''
+        Construct a PdfReader "widget" with the parent MASTER.
+        Have the same options than a classic "Frame" widget, in addition to the following :
+        @param defaultMode (optional) the default viewing mode of the reader, can be one of {FULL_WIDTH = 0, FULL_PAGE = 1, REAL_SIZE = 2}
+        @param fp (optional) the address of a pdf file to load with the widget, default to no file
+        @param filepath (optional) the address of a pdf file to load with the widget, default to no file
+        '''
+        self.mode = defaultMode
+        defaultFile = (filepath if filepath != ... else fp)
 
         Widget.__init__(self, master, 'frame', {}, kw)
 
@@ -64,7 +70,7 @@ class PdfReader(Widget):
             'rotCC' : PdfReader.__IconButton(self.canvas, 0.715, 0.008, 0.075, 2),
             'rotC' : PdfReader.__IconButton(self.canvas, 0.795, 0.008, 0.075, 3)
         }
-        if defaultFile != None:
+        if defaultFile != ...:
             self.load(defaultFile)
         self.__loop()
 
@@ -72,8 +78,18 @@ class PdfReader(Widget):
     #[> Public Methods <]#
     #--------------------#
 
-    def load(self, fp : str) -> None: 
-        Thread(target=self.__load, kwargs={'fp' : fp}).start()
+    def load(self, fp : str, first : int | None = None, last : int | None = None) -> None: 
+        '''
+        load a new pdf file into the reader
+        @param fp the address of the file to load
+        @param first (optional) the first page of the document to load (previous pages will be omitted)
+        @param last (optional) the last page of the document to load (following pages will be omitted)
+        '''
+        if first is not int or first < 1:
+            first = 1
+        if last is not int or last < first:
+            last = None
+        Thread(target=self.__load, kwargs={'fp' : fp, 'first' : first, 'last' : last}).start()
         while len(self.__sourceImg) == 0: pass #Busy waiting until one page at least is loaded (not optimal)
 
     #---------------------#
@@ -81,6 +97,7 @@ class PdfReader(Widget):
     #---------------------#
 
     def __loop(self):
+        '''Control loop of the PdfReader'''
         if self.__resized(): self.__resize()
 
         if self.focus_get() == self.__pageEntry:
@@ -121,18 +138,21 @@ class PdfReader(Widget):
             elif self.__buttons['rotC'].hovered(self.__cX, self.__cY):
                 self.__rotation -= 90
                 self.__pageWidth, self.__pageHeight = self.__pageHeight, self.__pageWidth
+                self.__offsetY = self.__offsetY * (self.__pageHeight / self.__pageWidth)
                 self.__resize()
             elif self.__buttons['rotCC'].hovered(self.__cX, self.__cY):
                 self.__rotation += 90
                 self.__pageWidth, self.__pageHeight = self.__pageHeight, self.__pageWidth
+                self.__offsetY = self.__offsetY * (self.__pageHeight / self.__pageWidth)
                 self.__resize()
         else:
             for button in self.__buttons.keys():
                 self.__buttons[button].hovered(self.__cX, self.__cY)
 
-        self.canvas.after(16, self.__loop)
+        self.after(16, self.__loop)
 
-    def __load(self, fp : str):
+    def __load(self, fp : str, first : int, last : int | None):
+        '''Load the pages of a pdf document as Pillow Image objects'''
         self.__pageWidth : int = 1
         self.__pageHeight : int = 1
         self.currentPage = 1
@@ -140,18 +160,23 @@ class PdfReader(Widget):
 
         self.__sourceImg = []
         doc = pdf.open(fp)
-        for page in doc:
-            pix = page.get_pixmap()
-            self.__sourceImg.append(Image.frombytes('RGB', (pix.width, pix.height), pix.samples))
-            
-            self.__pageWidth = self.__sourceImg[-1].width
-            self.__pageHeight = self.__sourceImg[-1].height
-            self.pageCount += 1
+        if last == None:
+            last = len(doc)
+        for page in range(len(doc)):
+            if page >= first - 1 and page <= last - 1:
+                pix = doc[page].get_pixmap()
+                self.__sourceImg.append(Image.frombytes('RGB', (pix.width, pix.height), pix.samples))
+                
+                self.__pageWidth = self.__sourceImg[-1].width
+                self.__pageHeight = self.__sourceImg[-1].height
+                self.pageCount += 1
 
+        for button in self.__buttons.keys():
+            self.__buttons[button].resize()
         self.__resize()
 
     def __resized(self) -> bool:
-        '''Check if the PdfReader was resized inside the main frame'''
+        '''Check if the widget was resized'''
         if (self.__width, self.__height) != (self.winfo_width(), self.winfo_height()):
             self.__width, self.__height = self.winfo_width(), self.winfo_height()
             for button in self.__buttons.keys():
@@ -160,31 +185,33 @@ class PdfReader(Widget):
         return False
 
     def __resize(self):
-        if self.mode == PdfReader.FULL_WIDTH:
-            self.__zoom = self.__width / self.__pageWidth
-            self.__offsetX = 0
-        elif self.mode == PdfReader.FULL_PAGE:
-            if self.__pageHeight > self.__pageWidth:
-                self.__zoom = self.__height / self.__pageHeight
-            else:
+        '''Resize all the elements of the PdfReader'''
+        if len(self.__sourceImg) > 0:
+            if self.mode == PdfReader.FULL_WIDTH:
                 self.__zoom = self.__width / self.__pageWidth
                 self.__offsetX = 0
-            self.__offsetY = - (self.currentPage - 1) * self.__pageHeight
-        elif self.mode == PdfReader.REAL_SIZE:
-            self.__zoom = self.winfo_fpixels('1i') / 200
-        if self.__pageWidth * self.__zoom < self.__width:
-            self.__offsetX = (self.__width - self.__pageWidth * self.__zoom) / self.__zoom / 2
-            self.horizontalScrollBar.place_forget()
-        else:
-            self.__offsetX = max(min(0, self.__offsetX), self.__width / self.__zoom - self.__pageWidth)
-            self.horizontalScrollBar.place(x=0, y=self.__height, anchor='sw', width=self.__width - 20, height=20)
+            elif self.mode == PdfReader.FULL_PAGE:
+                if self.__pageHeight > self.__pageWidth:
+                    self.__zoom = self.__height / self.__pageHeight
+                else:
+                    self.__zoom = self.__width / self.__pageWidth
+                    self.__offsetX = 0
+                self.__offsetY = - (self.currentPage - 1) * self.__pageHeight
+            elif self.mode == PdfReader.REAL_SIZE:
+                self.__zoom = self.winfo_fpixels('1i') / 200
+            if self.__pageWidth * self.__zoom < self.__width:
+                self.__offsetX = (self.__width - self.__pageWidth * self.__zoom) / self.__zoom / 2
+                self.horizontalScrollBar.place_forget()
+            else:
+                self.__offsetX = max(min(0, self.__offsetX), self.__width / self.__zoom - self.__pageWidth)
+                self.horizontalScrollBar.place(x=0, y=self.__height, anchor='sw', width=self.__width - 20, height=20)
 
-        self.verticalScrollBar.place(x=self.__width, y=0, anchor='ne', width=20, height=self.__height)
-        self.__pageEntry.place(x=self.__width * 0.5, y=self.__width * 0.045, anchor='e', width=self.__width * 0.06, height=self.__width * 0.04)
+            self.verticalScrollBar.place(x=self.__width, y=0, anchor='ne', width=20, height=self.__height)
+            self.__pageEntry.place(x=self.__width * 0.5, y=self.__width * 0.045, anchor='e', width=self.__width * 0.06, height=self.__width * 0.04)
 
-        self.__photoImg : dict[int : ImageTk.PhotoImage] = {}
-        for page in range(int(self.currentPage), int(self.currentPage) + (self.__height // int(self.__pageHeight * self.__zoom)) + 2):
-            self.__renderPage(page)
+            self.__photoImg : dict[int : ImageTk.PhotoImage] = {}
+            for page in range(int(self.currentPage), int(self.currentPage) + (self.__height // int(self.__pageHeight * self.__zoom)) + 2):
+                self.__renderPage(page)
         self.__print()
 
     def __renderPage(self, page : int):
@@ -198,7 +225,7 @@ class PdfReader(Widget):
             )
 
     def __print(self):
-        '''Create new canvas elements after deleting the previous ones'''
+        '''Create new canvas elements after deleting the existing ones'''
         self.canvas.delete('all')
 
         self.imgId : dict[int : int] = {}
@@ -229,7 +256,7 @@ class PdfReader(Widget):
         '''Vertical ScrollBar widget handling'''
         if args[0] == 'moveto':
             self.verticalScrollBar.set(max(0, float(args[1]) - 0.02), float(args[1]) + 0.02)
-            self.__offsetY = - float(args[1]) * (self.pageCount - 1) * self.__pageHeight
+            self.__offsetY = - float(args[1]) * (self.pageCount - 1) * self.__pageHeight * 1.042
             self.currentPage = int((- self.__offsetY) // self.__pageHeight) + 1
             self.__resize()
 
@@ -358,10 +385,3 @@ class PdfReader(Widget):
             elif self.id != 0:
                 self.canvas.itemconfigure(self.id, image=self.image)
             return False
-
-
-
-tk = Tk()
-test = PdfReader(tk, fp='t.pdf', width=500, height=500)
-test.pack()
-tk.mainloop()
