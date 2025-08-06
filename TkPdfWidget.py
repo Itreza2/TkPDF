@@ -1,4 +1,4 @@
-from tkinter import Tk, Widget, Canvas, Entry, Scrollbar, IntVar
+from tkinter import Widget, Canvas, Entry, Scrollbar, IntVar
 from PIL import Image, ImageTk
 import pymupdf as pdf
 from threading import Thread
@@ -19,7 +19,7 @@ class PdfReader(Widget):
                  **kw):
         '''
         Construct a PdfReader "widget" with the parent MASTER.
-        Have the same options than a classic "Frame" widget, in addition to the following :
+        Have the same options than a classic "Frame" widget, in addition of the following :
         @param defaultMode (optional) the default viewing mode of the reader, can be one of {FULL_WIDTH = 0, FULL_PAGE = 1, REAL_SIZE = 2}
         @param fp (optional) the address of a pdf file to load with the widget, default to no file
         @param filepath (optional) the address of a pdf file to load with the widget, default to no file
@@ -347,7 +347,7 @@ class PdfReader(Widget):
         '''Iteractible canvas element, a lot less ugly than a button widget'''
 
         ICON_SIZE = 64
-        source : Image.Image = Image.open('icons.png')
+        source : Image.Image = Image.open(__file__[:len(__file__) - len(__file__.split('\\')[-1])] + 'icons.png')
 
         def __init__(self, canvas : Canvas, x : float, y : float, w : float, icon : int):
             self.canvas : Canvas = canvas
